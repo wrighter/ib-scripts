@@ -80,7 +80,7 @@ class MarketDataApp(EClient, wrapper.EWrapper):
             self.request_contracts[rid] = contract
 
     @iswrapper
-    def error(self, req_id: TickerId, error_code: int, error: str):
+    def error(self, req_id: TickerId, error_code: int, error: str, advancedOrderRejectJson: str=""):
         super().error(req_id, error_code, error)
         print("Error. Id:", req_id, "Code:", error_code, "Msg:", error)
 

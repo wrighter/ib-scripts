@@ -15,7 +15,7 @@ from dateutil.parser import parse
 import numpy as np
 import pandas as pd
 
-from ibapi import wrapper
+import ibapi
 from ibapi.common import TickerId, BarData
 from ibapi.client import EClient
 from ibapi.contract import Contract
@@ -41,10 +41,10 @@ def make_download_path(args: argparse.Namespace, contract: Contract) -> str:
     return path
 
 
-class DownloadApp(EClient, wrapper.EWrapper):
+class DownloadApp(EClient, ibapi.wrapper.EWrapper):
     def __init__(self, contracts: ContractList, args: argparse.Namespace):
         EClient.__init__(self, wrapper=self)
-        wrapper.EWrapper.__init__(self)
+        ibapi.wrapper.EWrapper.__init__(self)
         self.request_id = 0
         self.started = False
         self.next_valid_order_id = None
@@ -97,23 +97,42 @@ class DownloadApp(EClient, wrapper.EWrapper):
         )
 
     def save_data(self, contract: Contract, bars: BarDataList) -> None:
-        data = [
-            [b.date, b.open, b.high, b.low, b.close, b.volume, b.barCount, b.average]
-            for b in bars
-        ]
-        df = pd.DataFrame(
-            data,
-            columns=[
-                "date",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-                "barCount",
-                "average",
-            ],
-        )
+        if ibapi.__version__ > "9":
+            data = [
+                [b.date, b.open, b.high, b.low, b.close, b.volume, b.barCount, b.average]
+                for b in bars
+            ]
+            df = pd.DataFrame(
+                data,
+                columns=[
+                    "date",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                    "barCount",
+                    "average",
+                ],
+            )
+        else:
+            data = [
+                [b.date, b.open, b.high, b.low, b.close, b.volume, b.barCount, b.wap]
+                for b in bars
+            ]
+            df = pd.DataFrame(
+                data,
+                columns=[
+                    "date",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                    "barCount",
+                    "wap",
+                ],
+            )
         if self.daily_files():
             path = "%s.csv" % make_download_path(self.args, contract)
         else:
@@ -204,7 +223,7 @@ class DownloadApp(EClient, wrapper.EWrapper):
             )
 
     @iswrapper
-    def error(self, req_id: TickerId, error_code: int, error: str):
+    def error(self, req_id: TickerId, error_code: int, error: str, advancedOrderRejectJson: str=""):
         super().error(req_id, error_code, error)
         if req_id < 0:
             # we get error logs that really are just info
