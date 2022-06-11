@@ -5,6 +5,8 @@ import sys
 import argparse
 import logging
 from datetime import datetime, timedelta
+from threading import Thread
+from queue import Queue
 
 from typing import List, Optional
 from collections import defaultdict
@@ -53,28 +55,45 @@ class DownloadApp(EClient, wrapper.EWrapper):
         self.args = args
         self.current = self.args.end_date
         self.duration = self.args.duration
-        self.useRTH = 0
+        self.useRTH = args.useRTH
+        self.queue = Queue()
+
+    def send_done(self, code):
+        logging.info("Sending code %s", code)
+        self.queue.put(code)
+
+    def wait_done(self):
+        logging.info("Waiting for thread to finish ...")
+        code = self.queue.get()
+        logging.info("Received code %s", code)
+        self.queue.task_done()
+        return code
 
     def next_request_id(self, contract: Contract) -> int:
         self.request_id += 1
         self.requests[self.request_id] = contract
         return self.request_id
 
+    def next_start_time(self) -> datetime:
+        return (self.current - timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+
     def historicalDataRequest(self, contract: Contract) -> None:
         cid = self.next_request_id(contract)
         self.pending_ends.add(cid)
 
         self.reqHistoricalData(
-            cid,  # tickerId, used to identify incoming data
+            cid,                    # tickerId, used to identify incoming data
             contract,
-            self.current.strftime("%Y%m%d 00:00:00"),  # always go to midnight
-            self.duration,  # amount of time to go back
-            self.args.size,  # bar size
-            self.args.data_type,  # historical data type
-            self.useRTH,  # useRTH (regular trading hours)
-            1,  # format the date in yyyyMMdd HH:mm:ss
-            False,  # keep up to date after snapshot
-            [],  # chart options
+            self.current.strftime("%Y%m%d %H:%M:%S"),
+            self.duration,          # amount of time to go back
+            self.args.size,         # bar size
+            self.args.data_type,    # historical data type
+            self.useRTH,            # useRTH (regular trading hours)
+            1,                      # format the date in yyyyMMdd HH:mm:ss
+            False,                  # keep up to date after snapshot
+            [],                     # chart options
         )
 
     def save_data(self, contract: Contract, bars: BarDataList) -> None:
@@ -119,7 +138,7 @@ class DownloadApp(EClient, wrapper.EWrapper):
             self.args.start_date = ts  # TODO make this per contract
         if ts > self.args.end_date:
             logging.warning("Data for %s is not available before %s", contract, ts)
-            self.done = True
+            self.send_done(-1)
             return
         # if we are getting daily data or longer, we'll grab the entire amount at once
         if self.daily_files():
@@ -130,7 +149,7 @@ class DownloadApp(EClient, wrapper.EWrapper):
                 self.duration = "%d Y" % np.ceil(days / 365)
             # when getting daily data, look at regular trading hours only
             # to get accurate daily closing prices
-            self.useRTH = 1
+            self.useRTH = True
             # round up current time to midnight for even days
             self.current = self.current.replace(
                 hour=0, minute=0, second=0, microsecond=0
@@ -145,14 +164,18 @@ class DownloadApp(EClient, wrapper.EWrapper):
     @iswrapper
     def historicalDataEnd(self, reqId: int, start: str, end: str) -> None:
         super().historicalDataEnd(reqId, start, end)
+        logging.info("historicalDataEnd: %s %s %s", reqId, start, end)
+        self.handle_end(reqId, datetime.strptime(start, "%Y%m%d  %H:%M:%S"))
+    
+    def handle_end(self, reqId: int, start: str) -> None:
         self.pending_ends.remove(reqId)
         if len(self.pending_ends) == 0:
-            print(f"All requests for {self.current} complete.")
+            logging.info("All requests for %s complete.", self.current)
             for rid, bars in self.bar_data.items():
                 self.save_data(self.requests[rid], bars)
-            self.current = datetime.strptime(start, "%Y%m%d  %H:%M:%S")
+            self.current = start            
             if self.current <= self.args.start_date:
-                self.done = True
+                self.send_done(0)
             else:
                 for contract in self.contracts:
                     self.historicalDataRequest(contract)
@@ -184,11 +207,15 @@ class DownloadApp(EClient, wrapper.EWrapper):
     def error(self, req_id: TickerId, error_code: int, error: str):
         super().error(req_id, error_code, error)
         if req_id < 0:
+            # we get error logs that really are just info
             logging.debug("Error. Id: %s Code %s Msg: %s", req_id, error_code, error)
         else:
             logging.error("Error. Id: %s Code %s Msg: %s", req_id, error_code, error)
-            # we will always exit on error since data will need to be validated
-            self.done = True
+            if error_code == 162: # no data returned, keep going
+                self.handle_end(req_id, self.next_start_time())
+            else:
+                # we will always exit on error since data will need to be validated
+                self.done = True
 
 
 def make_contract(symbol: str, sec_type: str, currency: str, exchange: str, localsymbol: str) -> Contract:
@@ -274,7 +301,18 @@ def main():
             """Parse the date."""
             setattr(namespace, self.dest, parse(value))
 
-    argp = argparse.ArgumentParser()
+    argp = argparse.ArgumentParser("""
+    Downloader for Interactive Brokers bar data. Using TWS API, will download
+    historical instrument data and place csv files in a specified directory.
+    Handles basic errors and reports issues with data that it finds.
+
+    Examples:
+    Get the continuous 1 minute bars for the E-mini future from GLOBEX
+        ./download_bars.py --security-type CONTFUT --start-date 20191201 --end-date 20191228 --exchange GLOBEX ES
+
+    Get 1 minute bars for US Equity AMGN for a few days
+        ./download_bars.py --size "1 min" --start-date 20200202 --end-date 20200207 AMGN
+    """)
     argp.add_argument("symbol", nargs="+")
     argp.add_argument(
         "-d", "--debug", action="store_true", help="turn on debug logging"
@@ -309,6 +347,9 @@ def main():
         "--security-type", type=str, default="STK", help="security type for symbols"
     )
     argp.add_argument(
+        "--useRTH", action="store_true", help="use Regular Trading Hours"
+    )
+    argp.add_argument(
         "--start-date",
         help="First day for bars",
         default=now - timedelta(days=2),
@@ -341,7 +382,7 @@ def main():
         args.data_type = args.data_type.upper()
         validate_data_type(args.data_type)
     except ValidationException as ve:
-        print(ve)
+        logging.error(ve)
         sys.exit(1)
 
     logging.debug(f"args={args}")
@@ -352,8 +393,12 @@ def main():
         os.makedirs(make_download_path(args, contract), exist_ok=True)
     app = DownloadApp(contracts, args)
     app.connect("127.0.0.1", args.port, clientId=0)
+    Thread(target=app.run).start()
 
-    app.run()
+    code = app.wait_done()
+    app.disconnect()
+
+    return code
 
 
 if __name__ == "__main__":

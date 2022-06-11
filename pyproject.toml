@@ -1,0 +1,30 @@
+[build-system]
+requires      = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ib-scripts"
+version = "1.0.0"
+description = "Scripts for use with Interactive Brokers TWS"
+readme = "README.md"
+authors = [{ name = "Matt Wright", email = "matt@wrighters.net" }]
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+keywords = ["interactive", "brokers", "finance"]
+dependencies = [
+    "pandas",
+    "numpy",
+    "python-dateutil",
+    "ibapi"
+]
+requires-python = ">=3.8"
+
+[project.optional-dependencies]
+dev = ["pip-tools"]
+
+[project.urls]
+Homepage = "https://github.com/wrighter/ib-scripts"
