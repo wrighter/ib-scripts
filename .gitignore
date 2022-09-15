@@ -169,3 +169,6 @@ cython_debug/
 
 # data directory will contain download data if run from within sandbox
 data
+
+# vi swp files
+*.swp
