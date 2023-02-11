@@ -320,18 +320,21 @@ def main():
             """Parse the date."""
             setattr(namespace, self.dest, parse(value))
 
-    argp = argparse.ArgumentParser("""
+    argp = argparse.ArgumentParser(prog="TWSDownloadApp",
+                                   description="""
     Downloader for Interactive Brokers bar data. Using TWS API, will download
     historical instrument data and place csv files in a specified directory.
     Handles basic errors and reports issues with data that it finds.
-
+    """,
+                                   epilog="""
     Examples:
     Get the continuous 1 minute bars for the E-mini future from GLOBEX
         ./download_bars.py --security-type CONTFUT --start-date 20191201 --end-date 20191228 --exchange GLOBEX ES
 
     Get 1 minute bars for US Equity AMGN for a few days
         ./download_bars.py --size "1 min" --start-date 20200202 --end-date 20200207 AMGN
-    """)
+    """,
+                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     argp.add_argument("symbol", nargs="+")
     argp.add_argument(
         "-d", "--debug", action="store_true", help="turn on debug logging"
