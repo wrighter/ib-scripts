@@ -4,6 +4,8 @@ import os
 import sys
 import argparse
 import logging
+import pytz
+
 from datetime import datetime, timedelta
 from threading import Thread
 from queue import Queue
@@ -18,7 +20,7 @@ import pandas as pd
 import ibapi
 from ibapi.common import TickerId, BarData
 from ibapi.client import EClient
-from ibapi.contract import Contract
+from ibapi.contract import Contract, ContractDetails
 from ibapi.utils import iswrapper
 
 ContractList = List[Contract]
@@ -48,13 +50,13 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
         self.request_id = 0
         self.started = False
         self.next_valid_order_id = None
-        self.contracts = contracts
+        self.contracts_specs = contracts
+        self.contracts = []
         self.requests = {}
         self.bar_data = defaultdict(list)
         self.pending_ends = set()
         self.args = args
         self.current = self.args.end_date
-        self.duration = self.args.duration
         self.useRTH = args.useRTH
         self.queue = Queue()
 
@@ -86,7 +88,7 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
         self.reqHistoricalData(
             cid,                    # tickerId, used to identify incoming data
             contract,
-            self.current.strftime("%Y%m%d %H:%M:%S"),
+            self.current.strftime(f"%Y%m%d %H:%M:%S {self.args.timezone}"),
             self.duration,          # amount of time to go back
             self.args.size,         # bar size
             self.args.data_type,    # historical data type
@@ -133,24 +135,61 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
                     "wap",
                 ],
             )
+
+        df['date'] = df['date'].apply(self._parse_timestamp)
+
         if self.daily_files():
+            # just overwrite whatever is there
             path = "%s.csv" % make_download_path(self.args, contract)
+            df.to_csv(path, index=False)
         else:
-            # since we fetched data until midnight, store data in
-            # date file to which it belongs
-            last = (self.current - timedelta(days=1)).strftime("%Y%m%d")
-            path = os.path.sep.join(
-                [make_download_path(self.args, contract), "%s.csv" % last,]
-            )
-        df.to_csv(path, index=False)
+            # depending on how things moved along, we'll have data
+            # from different dates. 
+            for d in df['date'].dt.date.unique():
+                path = os.path.sep.join(
+                        [make_download_path(self.args, contract), "%s.csv" % d.strftime("%Y%m%d"),]
+                )
+                new_bars = df.loc[df['date'].dt.date == d]
+                # if a file exists, let's attempt to load it, merge our data in, and then save it
+                if os.path.exists(path):
+                    existing_bars = pd.read_csv(path, parse_dates=['date'])
+                    combined = pd.concat([existing_bars, new_bars])
+                    new_bars = combined.groupby('date').last().reset_index()
+
+                new_bars.to_csv(path, index=False)
+
 
     def daily_files(self):
         return SIZES.index(self.args.size.split()[1]) >= 5
 
+
+    def _parse_timestamp(self, ts: str) -> datetime:
+        def _try_formats(_ts: str) -> datetime:
+            try:
+                _ts = datetime.strptime(_ts, "%Y%m%d-%H:%M:%S")
+            except ValueError as ve:
+                try:
+                    _ts = datetime.strptime(_ts, "%Y%m%d  %H:%M:%S")
+                except ValueError as ve2:
+                    _ts = datetime.strptime(_ts, "%Y-%m-%d %H:%M:%S%z")
+            return _ts
+
+        tokens = ts.split()
+        if len(tokens) == 1:
+            ts = _try_formats(ts)
+            tz = pytz.timezone(self.args.timezone)
+            ts = tz.localize(ts)
+        else:
+            ts = _try_formats(" ".join(tokens[:-1]))
+            tz = pytz.timezone(tokens[-1])
+            ts = tz.localize(ts)
+        return ts
+
     @iswrapper
     def headTimestamp(self, reqId: int, headTimestamp: str) -> None:
         contract = self.requests.get(reqId)
-        ts = datetime.strptime(headTimestamp, "%Y%m%d  %H:%M:%S")
+        ts = self._parse_timestamp(headTimestamp)
+
         logging.info("Head Timestamp for %s is %s", contract, ts)
         if ts > self.args.start_date or self.args.max_days:
             logging.warning("Overriding start date, setting to %s", ts)
@@ -173,6 +212,8 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
             self.current = self.current.replace(
                 hour=0, minute=0, second=0, microsecond=0
             )
+        else:
+            self.duration = f"{24 * 60 * 60} S" # a day's worth
 
         self.historicalDataRequest(contract)
 
@@ -184,7 +225,9 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
     def historicalDataEnd(self, reqId: int, start: str, end: str) -> None:
         super().historicalDataEnd(reqId, start, end)
         logging.info("historicalDataEnd: %s %s %s", reqId, start, end)
-        self.handle_end(reqId, datetime.strptime(start, "%Y%m%d  %H:%M:%S"))
+        ts = self._parse_timestamp(start)
+
+        self.handle_end(reqId, ts)
     
     def handle_end(self, reqId: int, start: str) -> None:
         self.pending_ends.remove(reqId)
@@ -196,8 +239,8 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
             if self.current <= self.args.start_date:
                 self.send_done(0)
             else:
-                for contract in self.contracts:
-                    self.historicalDataRequest(contract)
+                for cd in self.contracts:
+                    self.historicalDataRequest(cd.contract)
 
     @iswrapper
     def connectAck(self):
@@ -208,19 +251,30 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
         super().nextValidId(order_id)
 
         self.next_valid_order_id = order_id
-        logging.info(f"nextValidId: {order_id}")
+        logging.info("nextValidId: %s", order_id)
         # we can start now
         self.start()
+
+    @iswrapper
+    def contractDetails(self, reqId: int, contractDetails: ContractDetails) -> None:
+        super().contractDetails(reqId, contractDetails)
+        logging.debug("ContractDetails for %s: %s", reqId, contractDetails)
+        self.contracts.append(contractDetails)
+
+    @iswrapper
+    def contractDetailsEnd(self, reqId: int) -> None:
+        for cd in self.contracts:
+            self.reqHeadTimeStamp(
+                self.next_request_id(cd.contract), cd.contract, self.args.data_type, 0, 1
+            )
 
     def start(self):
         if self.started:
             return
 
         self.started = True
-        for contract in self.contracts:
-            self.reqHeadTimeStamp(
-                self.next_request_id(contract), contract, self.args.data_type, 0, 1
-            )
+        for contract in self.contracts_specs:
+            self.reqContractDetails(self.next_request_id(contract), contract)
 
     @iswrapper
     def error(self, req_id: TickerId, error_code: int, error: str, advancedOrderRejectJson: str=""):
@@ -232,9 +286,11 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
             logging.error("Error. Id: %s Code %s Msg: %s", req_id, error_code, error)
             if error_code == 162: # no data returned, keep going
                 self.handle_end(req_id, self.next_start_time())
-            else:
-                # we will always exit on error since data will need to be validated
-                self.done = True
+            elif error_code == 200: # security doesn' exist
+                logging.error("The security doesn't exist, check your parameters")
+
+            # we will always exit on error since data will need to be validated
+            self.send_done(0)
 
 
 def make_contract(symbol: str, sec_type: str, currency: str, exchange: str, localsymbol: str) -> Contract:
@@ -271,9 +327,6 @@ def _validate(value: str, name: str, valid: List[str]) -> None:
 SIZES = ["secs", "min", "mins", "hour", "hours", "day", "week", "month"]
 DURATIONS = ["S", "D", "W", "M", "Y"]
 
-
-def validate_duration(duration: str) -> None:
-    _validate(duration, "duration", DURATIONS)
 
 
 def validate_size(size: str) -> None:
@@ -328,8 +381,8 @@ def main():
     """,
                                    epilog="""
     Examples:
-    Get the continuous 1 minute bars for the E-mini future from GLOBEX
-        ./download_bars.py --security-type CONTFUT --start-date 20191201 --end-date 20191228 --exchange GLOBEX ES
+    Get the continuous 1 minute bars for the E-mini future from CME
+        ./download_bars.py --security-type CONTFUT --start-date 20191201 --end-date 20191228 --exchange CME ES
 
     Get 1 minute bars for US Equity AMGN for a few days
         ./download_bars.py --size "1 min" --start-date 20200202 --end-date 20200207 AMGN
@@ -346,7 +399,6 @@ def main():
         "-p", "--port", type=int, default=7496, help="local port for TWS connection"
     )
     argp.add_argument("--size", type=str, default="1 min", help="bar size")
-    argp.add_argument("--duration", type=str, default="1 D", help="bar duration")
     argp.add_argument(
         "-t", "--data-type", type=str, default="TRADES", help="bar data type"
     )
@@ -370,6 +422,9 @@ def main():
     )
     argp.add_argument(
         "--useRTH", action="store_true", help="use Regular Trading Hours"
+    )
+    argp.add_argument(
+        "--timezone", type=str, help="Timezone for requests", default="UTC"
     )
     argp.add_argument(
         "--start-date",
@@ -399,7 +454,6 @@ def main():
     logging.basicConfig(**logargs)
 
     try:
-        validate_duration(args.duration)
         validate_size(args.size)
         args.data_type = args.data_type.upper()
         validate_data_type(args.data_type)
@@ -407,6 +461,10 @@ def main():
         logging.error(ve)
         sys.exit(1)
 
+    
+    tz = pytz.timezone(args.timezone)
+    args.start_date = tz.localize(args.start_date)
+    args.end_date = tz.localize(args.end_date)
     logging.debug(f"args={args}")
     contracts = []
     for s in args.symbol:
