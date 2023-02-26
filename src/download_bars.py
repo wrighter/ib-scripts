@@ -165,6 +165,13 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
 
     def _parse_timestamp(self, ts: str) -> datetime:
         def _try_formats(_ts: str) -> datetime:
+            if len(_ts) == 8:
+                try:
+                    _ts = datetime.strptime(_ts, "%Y%m%d")
+                    return _ts
+                except ValueError as ve:
+                    logging.error("%s not parseable as date: %s", _ts, ve)
+                    raise ve
             try:
                 _ts = datetime.strptime(_ts, "%Y%m%d-%H:%M:%S")
             except ValueError as ve:
