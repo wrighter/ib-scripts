@@ -9,7 +9,7 @@ The process of getting the API up and running to collect real time data is descr
 1. Download TWS software from [Interactive Brokers](https://www.interactivebrokers.com/). 
 1. Create and fund your account
 1. Pay for data for the product you want to access
-1. Download TWS API from [here](https://interactivebrokers.github.io/).
+1. Download or upgrade the TWS API from [here](https://interactivebrokers.github.io/). This repo was last tested against 10.19.1.
 1. Setup your Python environment (using pyenv, virtualenv, anaconda, whatever...)
 1. Install the TWS API in your environment 
 1. Install the dependencies
