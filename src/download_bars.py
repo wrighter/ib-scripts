@@ -78,65 +78,46 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
 
     def next_start_time(self) -> datetime:
         return (self.current - timedelta(days=1)).replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
+            hour=0, minute=0, second=0, microsecond=0
+        )
 
     def historicalDataRequest(self, contract: Contract) -> None:
         cid = self.next_request_id(contract)
         self.pending_ends.add(cid)
 
         self.reqHistoricalData(
-            cid,                    # tickerId, used to identify incoming data
+            cid,  # tickerId, used to identify incoming data
             contract,
             self.current.strftime(f"%Y%m%d %H:%M:%S {self.args.timezone}"),
-            self.duration,          # amount of time to go back
-            self.args.size,         # bar size
-            self.args.data_type,    # historical data type
-            self.useRTH,            # useRTH (regular trading hours)
-            1,                      # format the date in yyyyMMdd HH:mm:ss
-            False,                  # keep up to date after snapshot
-            [],                     # chart options
+            self.duration,  # amount of time to go back
+            self.args.size,  # bar size
+            self.args.data_type,  # historical data type
+            self.useRTH,  # useRTH (regular trading hours)
+            1,  # format the date in yyyyMMdd HH:mm:ss
+            False,  # keep up to date after snapshot
+            [],  # chart options
         )
 
     def save_data(self, contract: Contract, bars: BarDataList) -> None:
-        if ibapi.__version__ > "9":
-            data = [
-                [b.date, b.open, b.high, b.low, b.close, b.volume, b.barCount, b.average]
-                for b in bars
-            ]
-            df = pd.DataFrame(
-                data,
-                columns=[
-                    "date",
-                    "open",
-                    "high",
-                    "low",
-                    "close",
-                    "volume",
-                    "barCount",
-                    "average",
-                ],
-            )
-        else:
-            data = [
-                [b.date, b.open, b.high, b.low, b.close, b.volume, b.barCount, b.wap]
-                for b in bars
-            ]
-            df = pd.DataFrame(
-                data,
-                columns=[
-                    "date",
-                    "open",
-                    "high",
-                    "low",
-                    "close",
-                    "volume",
-                    "barCount",
-                    "wap",
-                ],
-            )
+        data = [
+            [b.date, b.open, b.high, b.low, b.close, b.volume, b.barCount, b.wap]
+            for b in bars
+        ]
+        df = pd.DataFrame(
+            data,
+            columns=[
+                "date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "barCount",
+                "wap",
+            ],
+        )
 
-        df['date'] = df['date'].apply(self._parse_timestamp)
+        df["date"] = df["date"].apply(self._parse_timestamp)
 
         if self.daily_files():
             # just overwrite whatever is there
@@ -144,24 +125,25 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
             df.to_csv(path, index=False)
         else:
             # depending on how things moved along, we'll have data
-            # from different dates. 
-            for d in df['date'].dt.date.unique():
+            # from different dates.
+            for d in df["date"].dt.date.unique():
                 path = os.path.sep.join(
-                        [make_download_path(self.args, contract), "%s.csv" % d.strftime("%Y%m%d"),]
+                    [
+                        make_download_path(self.args, contract),
+                        "%s.csv" % d.strftime("%Y%m%d"),
+                    ]
                 )
-                new_bars = df.loc[df['date'].dt.date == d]
+                new_bars = df.loc[df["date"].dt.date == d]
                 # if a file exists, let's attempt to load it, merge our data in, and then save it
                 if os.path.exists(path):
-                    existing_bars = pd.read_csv(path, parse_dates=['date'])
+                    existing_bars = pd.read_csv(path, parse_dates=["date"])
                     combined = pd.concat([existing_bars, new_bars])
-                    new_bars = combined.groupby('date').last().reset_index()
+                    new_bars = combined.groupby("date").last().reset_index()
 
                 new_bars.to_csv(path, index=False)
 
-
     def daily_files(self):
         return SIZES.index(self.args.size.split()[1]) >= 5
-
 
     def _parse_timestamp(self, ts: str) -> datetime:
         def _try_formats(_ts: str) -> datetime:
@@ -220,7 +202,7 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
                 hour=0, minute=0, second=0, microsecond=0
             )
         else:
-            self.duration = f"{24 * 60 * 60} S" # a day's worth
+            self.duration = f"{24 * 60 * 60} S"  # a day's worth
 
         self.historicalDataRequest(contract)
 
@@ -235,14 +217,14 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
         ts = self._parse_timestamp(start)
 
         self.handle_end(reqId, ts)
-    
+
     def handle_end(self, reqId: int, start: str) -> None:
         self.pending_ends.remove(reqId)
         if len(self.pending_ends) == 0:
             logging.info("All requests for %s complete.", self.current)
             for rid, bars in self.bar_data.items():
                 self.save_data(self.requests[rid], bars)
-            self.current = start            
+            self.current = start
             if self.current <= self.args.start_date:
                 self.send_done(0)
             else:
@@ -272,7 +254,11 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
     def contractDetailsEnd(self, reqId: int) -> None:
         for cd in self.contracts:
             self.reqHeadTimeStamp(
-                self.next_request_id(cd.contract), cd.contract, self.args.data_type, 0, 1
+                self.next_request_id(cd.contract),
+                cd.contract,
+                self.args.data_type,
+                0,
+                1,
             )
 
     def start(self):
@@ -284,23 +270,31 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
             self.reqContractDetails(self.next_request_id(contract), contract)
 
     @iswrapper
-    def error(self, req_id: TickerId, error_code: int, error: str, advancedOrderRejectJson: str=""):
+    def error(
+        self,
+        req_id: TickerId,
+        error_code: int,
+        error: str,
+        advancedOrderRejectJson: str = "",
+    ):
         super().error(req_id, error_code, error)
         if req_id < 0:
             # we get error logs that really are just info
             logging.debug("Error. Id: %s Code %s Msg: %s", req_id, error_code, error)
         else:
             logging.error("Error. Id: %s Code %s Msg: %s", req_id, error_code, error)
-            if error_code == 162: # no data returned, keep going
+            if error_code == 162:  # no data returned, keep going
                 self.handle_end(req_id, self.next_start_time())
-            elif error_code == 200: # security doesn' exist
+            elif error_code == 200:  # security doesn' exist
                 logging.error("The security doesn't exist, check your parameters")
 
             # we will always exit on error since data will need to be validated
             self.send_done(0)
 
 
-def make_contract(symbol: str, sec_type: str, currency: str, exchange: str, localsymbol: str) -> Contract:
+def make_contract(
+    symbol: str, sec_type: str, currency: str, exchange: str, localsymbol: str
+) -> Contract:
     contract = Contract()
     contract.symbol = symbol
     contract.secType = sec_type
@@ -335,7 +329,6 @@ SIZES = ["secs", "min", "mins", "hour", "hours", "day", "week", "month"]
 DURATIONS = ["S", "D", "W", "M", "Y"]
 
 
-
 def validate_size(size: str) -> None:
     _validate(size, "size", SIZES)
 
@@ -363,15 +356,34 @@ def validate_data_type(data_type: str) -> None:
     )
 
 
-def environment_info(args) -> None:
+def environment_check(args) -> None:
     # print out some info about the environment
     logging.debug("Python version: %s", sys.version)
     logging.debug("IBPy version: %s", ibapi.__version__)
     logging.debug("Args: %s", args)
 
+    version = ibapi.get_version_string()
+    if "." not in version:
+        print("Warning: IBPy version is not in the expected format. %s" % version)
+        sys.exit(1)
+    major = version.split(".")[0]
+    try:
+        major = int(major)
+        if major < 10:
+            print(
+                "Warning: This script does not work with IBPy versions below 10: %s"
+                % version
+            )
+            print(
+                "Please upgrade to version 10 of IBPy, you can download it from https://interactivebrokers.github.io."
+            )
+            sys.exit(1)
+    except ValueError:
+        print("Warning: IBPy version is not in the expected format. %s" % version)
+        sys.exit(1)
+
 
 def main():
-
     now = datetime.now()
 
     class DateAction(argparse.Action):
@@ -387,13 +399,14 @@ def main():
             """Parse the date."""
             setattr(namespace, self.dest, parse(value))
 
-    argp = argparse.ArgumentParser(prog="TWSDownloadApp",
-                                   description="""
+    argp = argparse.ArgumentParser(
+        prog="TWSDownloadApp",
+        description="""
     Downloader for Interactive Brokers bar data. Using TWS API, will download
     historical instrument data and place csv files in a specified directory.
     Handles basic errors and reports issues with data that it finds.
     """,
-                                   epilog="""
+        epilog="""
     Examples:
     Get the continuous 1 minute bars for the E-mini future from CME
         ./download_bars.py --security-type CONTFUT --start-date 20191201 --end-date 20191228 --exchange CME ES
@@ -401,14 +414,13 @@ def main():
     Get 1 minute bars for US Equity AMGN for a few days
         ./download_bars.py --size "1 min" --start-date 20200202 --end-date 20200207 AMGN
     """,
-                                   formatter_class=argparse.RawDescriptionHelpFormatter)
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     argp.add_argument("symbol", nargs="+")
     argp.add_argument(
         "-d", "--debug", action="store_true", help="turn on debug logging"
     )
-    argp.add_argument(
-        "--logfile", help="log to file"
-    )
+    argp.add_argument("--logfile", help="log to file")
     argp.add_argument(
         "-p", "--port", type=int, default=7496, help="local port for TWS connection"
     )
@@ -434,9 +446,7 @@ def main():
     argp.add_argument(
         "--security-type", type=str, default="STK", help="security type for symbols"
     )
-    argp.add_argument(
-        "--useRTH", action="store_true", help="use Regular Trading Hours"
-    )
+    argp.add_argument("--useRTH", action="store_true", help="use Regular Trading Hours")
     argp.add_argument(
         "--timezone", type=str, help="Timezone for requests", default="UTC"
     )
@@ -447,27 +457,34 @@ def main():
         action=DateAction,
     )
     argp.add_argument(
-        "--end-date", help="Last day for bars", default=now, action=DateAction,
+        "--end-date",
+        help="Last day for bars",
+        default=now,
+        action=DateAction,
     )
     argp.add_argument(
-        "--max-days", help="Set start date to earliest date", action="store_true",
+        "--max-days",
+        help="Set start date to earliest date",
+        action="store_true",
     )
     args = argp.parse_args()
 
-    logargs = dict(format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-                   datefmt='%H:%M:%S')
+    logargs = dict(
+        format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
     if args.debug:
-        logargs['level'] = logging.DEBUG
+        logargs["level"] = logging.DEBUG
     else:
-        logargs['level'] = logging.INFO
+        logargs["level"] = logging.INFO
 
     if args.logfile:
-        logargs['filemode'] = 'a'
-        logargs['filename'] = args.logfile
+        logargs["filemode"] = "a"
+        logargs["filename"] = args.logfile
 
     logging.basicConfig(**logargs)
 
-    environment_info(args)
+    environment_check(args)
 
     try:
         validate_size(args.size)
@@ -477,14 +494,15 @@ def main():
         logging.error(ve)
         sys.exit(1)
 
-    
     tz = pytz.timezone(args.timezone)
     args.start_date = tz.localize(args.start_date)
     args.end_date = tz.localize(args.end_date)
     logging.debug(f"args={args}")
     contracts = []
     for s in args.symbol:
-        contract = make_contract(s, args.security_type, args.currency, args.exchange, args.localsymbol)
+        contract = make_contract(
+            s, args.security_type, args.currency, args.exchange, args.localsymbol
+        )
         contracts.append(contract)
         os.makedirs(make_download_path(args, contract), exist_ok=True)
     app = DownloadApp(contracts, args)
