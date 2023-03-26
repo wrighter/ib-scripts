@@ -363,6 +363,13 @@ def validate_data_type(data_type: str) -> None:
     )
 
 
+def environment_info(args) -> None:
+    # print out some info about the environment
+    logging.debug("Python version: %s", sys.version)
+    logging.debug("IBPy version: %s", ibapi.__version__)
+    logging.debug("Args: %s", args)
+
+
 def main():
 
     now = datetime.now()
@@ -459,6 +466,8 @@ def main():
         logargs['filename'] = args.logfile
 
     logging.basicConfig(**logargs)
+
+    environment_info(args)
 
     try:
         validate_size(args.size)
