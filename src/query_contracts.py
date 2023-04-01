@@ -2,13 +2,12 @@
 
 import argparse
 import logging
-from datetime import datetime, timedelta
-from threading import Thread
 from queue import Queue
+from threading import Thread
 
 import ibapi
-from ibapi.common import TickerId
 from ibapi.client import EClient
+from ibapi.common import TickerId
 from ibapi.contract import Contract, ContractDetails
 from ibapi.utils import iswrapper
 
@@ -59,11 +58,17 @@ class ContractQuery(EClient, ibapi.wrapper.EWrapper):
         super().contractDetails(reqId, cd)
         logging.debug("ContractDetails for %s: %s", reqId, cd)
 
-        print(f"{cd.contract.secType}:{cd.contract.symbol} Currency: {cd.contract.currency}")
+        print(
+            f"Security Type: {cd.contract.secType} Symbol:{cd.contract.symbol} Currency: {cd.contract.currency}"
+        )
         print(f"CUSIP: {cd.cusip}")
-        print(f"Primary Exchange: {cd.contract.primaryExchange} {cd.contract.description}")
+        print(
+            f"Primary Exchange: {cd.contract.primaryExchange} {cd.contract.description}"
+        )
         print(f"Details for {cd.marketName} - {cd.longName}")
-        print(f"Industry: {cd.industry}  Category: {cd.category}  Subcategory: {cd.subcategory}")
+        print(
+            f"Industry: {cd.industry}  Category: {cd.category}  Subcategory: {cd.subcategory}"
+        )
         print(f"OrderTypes: {cd.orderTypes}")
         print(f"ValidExchanges: {cd.validExchanges}")
         print(f"TradingHours: {cd.tradingHours}")
@@ -72,7 +77,6 @@ class ContractQuery(EClient, ibapi.wrapper.EWrapper):
             print(f"ContractMonth: {cd.contractMonth}")
         if cd.realExpirationDate:
             print(f"RealExpirationDate: {cd.realExpirationDate}")
-
 
     @iswrapper
     def contractDetailsEnd(self, reqId: int) -> None:
@@ -86,84 +90,92 @@ class ContractQuery(EClient, ibapi.wrapper.EWrapper):
         self.reqContractDetails(self.next_request_id(self.contract), self.contract)
 
     @iswrapper
-    def error(self, req_id: TickerId, error_code: int, error: str, advancedOrderRejectJson: str=""):
+    def error(
+        self,
+        req_id: TickerId,
+        error_code: int,
+        error: str,
+        advancedOrderRejectJson: str = "",
+    ):
         super().error(req_id, error_code, error)
         if req_id < 0:
             # we get error logs that really are just info
             logging.debug("Error. Id: %s Code %s Msg: %s", req_id, error_code, error)
         else:
             logging.error("Error. Id: %s Code %s Msg: %s", req_id, error_code, error)
-            if error_code == 162: # no data returned, keep going
+            if error_code == 162:  # no data returned, keep going
                 self.handle_end(req_id, self.next_start_time())
             else:
                 # we will always exit on error since data will need to be validated
                 self.done = True
 
 
-def make_contract(symbol: str, sec_type: str, currency: str, exchange: str, localsymbol: str) -> Contract:
+def make_contract(
+    symbol: str, sec_type: str, currency: str, exchange: str, localsymbol: str
+) -> Contract:
     contract = Contract()
     contract.symbol = symbol
-    contract.secType = sec_type
-    contract.currency = currency
-    contract.exchange = exchange
+    if sec_type:
+        contract.secType = sec_type
+    if currency:
+        contract.currency = currency
+    if exchange:
+        contract.exchange = exchange
     if localsymbol:
         contract.localSymbol = localsymbol
     return contract
 
 
 def main():
-
-    argp = argparse.ArgumentParser(prog="ContractQuery",
-                                   description="""
+    argp = argparse.ArgumentParser(
+        prog="ContractQuery",
+        description="""
     Queries contracts and displays them for Interactive Brokers. Using TWS API, will invoke 
     the contractDetails function and print formatted data returned
     """,
-                                   epilog="""
+        epilog="""
     Examples:
     Get the details for the QQQ ETF
         ./query_contracts.py --security-type STK --exchange NASDAQ --symbol QQQ
 
     """,
-                                   formatter_class=argparse.RawDescriptionHelpFormatter)
-    argp.add_argument("--symbol", type=str, default="")
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    argp.add_argument("--symbol", type=str)
     argp.add_argument(
         "-d", "--debug", action="store_true", help="turn on debug logging"
     )
-    argp.add_argument(
-        "--logfile", help="log to file"
-    )
+    argp.add_argument("--logfile", help="log to file")
     argp.add_argument(
         "-p", "--port", type=int, default=7496, help="local port for TWS connection"
     )
-    argp.add_argument(
-        "--currency", type=str, default="USD", help="currency for symbols"
-    )
-    argp.add_argument(
-        "--exchange", type=str, default="SMART", help="exchange for symbols"
-    )
+    argp.add_argument("--currency", type=str, help="currency for symbols")
+    argp.add_argument("--exchange", type=str, help="exchange for symbols")
     argp.add_argument(
         "--localsymbol", type=str, default="", help="local symbol (for futures)"
     )
-    argp.add_argument(
-        "--security-type", type=str, default="STK", help="security type for symbols"
-    )
+    argp.add_argument("--security-type", type=str, help="security type for symbols")
     args = argp.parse_args()
 
-    logargs = dict(format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-                   datefmt='%H:%M:%S')
+    logargs = dict(
+        format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
     if args.debug:
-        logargs['level'] = logging.DEBUG
+        logargs["level"] = logging.DEBUG
     else:
-        logargs['level'] = logging.INFO
+        logargs["level"] = logging.INFO
 
     if args.logfile:
-        logargs['filemode'] = 'a'
-        logargs['filename'] = args.logfile
+        logargs["filemode"] = "a"
+        logargs["filename"] = args.logfile
 
     logging.basicConfig(**logargs)
 
     logging.debug(f"args={args}")
-    contract = make_contract(args.symbol, args.security_type, args.currency, args.exchange, args.localsymbol)
+    contract = make_contract(
+        args.symbol, args.security_type, args.currency, args.exchange, args.localsymbol
+    )
     app = ContractQuery(contract, args)
     app.connect("127.0.0.1", args.port, clientId=0)
     Thread(target=app.run).start()
