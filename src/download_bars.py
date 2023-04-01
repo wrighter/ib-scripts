@@ -28,18 +28,22 @@ BarDataList = List[BarData]
 OptionalDate = Optional[datetime]
 
 
-def make_download_path(args: argparse.Namespace, contract: Contract) -> str:
+def make_download_path(
+    args: argparse.Namespace, contract: Optional[Contract] = None
+) -> str:
     """Make path for saving csv files.
-    Files to be stored in base_directory/<security_type>/<size>/<symbol>/
+    Files to be stored in base_directory/<security_type>/<size>/[<symbol>]
     """
-    path = os.path.sep.join(
-        [
-            args.base_directory,
-            args.security_type,
-            args.size.replace(" ", "_"),
-            contract.symbol,
-        ]
-    )
+    elements = [
+        args.base_directory,
+        args.security_type,
+        args.size.replace(" ", "_"),
+    ]
+    if contract:
+        elements.append(contract.symbol)
+
+    path = os.path.sep.join(elements)
+    os.makedirs(path, exist_ok=True)
     return path
 
 
@@ -121,7 +125,7 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
 
         if self.daily_files():
             # just overwrite whatever is there
-            path = "%s.csv" % make_download_path(self.args, contract)
+            path = f"{make_download_path(self.args)}/{contract.symbol}.csv"
             df.to_csv(path, index=False)
         else:
             # depending on how things moved along, we'll have data
@@ -130,7 +134,7 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
                 path = os.path.sep.join(
                     [
                         make_download_path(self.args, contract),
-                        "%s.csv" % d.strftime("%Y%m%d"),
+                        f"{d.strftime('%Y%m%d')}.csv",
                     ]
                 )
                 new_bars = df.loc[df["date"].dt.date == d]
@@ -504,7 +508,6 @@ def main():
             s, args.security_type, args.currency, args.exchange, args.localsymbol
         )
         contracts.append(contract)
-        os.makedirs(make_download_path(args, contract), exist_ok=True)
     app = DownloadApp(contracts, args)
     app.connect("127.0.0.1", args.port, clientId=0)
     Thread(target=app.run).start()
