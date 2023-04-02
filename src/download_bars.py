@@ -126,7 +126,7 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
         if self.daily_files():
             # just overwrite whatever is there
             path = f"{make_download_path(self.args)}/{contract.symbol}.csv"
-            df.to_csv(path, index=False)
+            df.to_csv(path, index=False, date_format=self.args.date_format)
         else:
             # depending on how things moved along, we'll have data
             # from different dates.
@@ -144,7 +144,7 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
                     combined = pd.concat([existing_bars, new_bars])
                     new_bars = combined.groupby("date").last().reset_index()
 
-                new_bars.to_csv(path, index=False)
+                new_bars.to_csv(path, index=False, date_format=self.args.date_format)
 
     def daily_files(self):
         return SIZES.index(self.args.size.split()[1]) >= 5
@@ -453,6 +453,9 @@ def main():
     argp.add_argument("--useRTH", action="store_true", help="use Regular Trading Hours")
     argp.add_argument(
         "--timezone", type=str, help="Timezone for requests", default="UTC"
+    )
+    argp.add_argument(
+        "--date-format", type=str, help="Date format for output csvs", default="%Y-%m-%d %H:%M:%S"
     )
     argp.add_argument(
         "--start-date",
