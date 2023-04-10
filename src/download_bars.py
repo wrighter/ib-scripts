@@ -289,11 +289,11 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
             logging.error("Error. Id: %s Code %s Msg: %s", req_id, error_code, error)
             if error_code == 162:  # no data returned, keep going
                 self.handle_end(req_id, self.next_start_time())
-            elif error_code == 200:  # security doesn' exist
+            elif error_code == 200:  # security doesn't exist
                 logging.error("The security doesn't exist, check your parameters")
-
-            # we will always exit on error since data will need to be validated
-            self.send_done(0)
+            else:
+                # we will always exit on error since data will need to be validated
+                self.send_done(0)
 
 
 def make_contract(
