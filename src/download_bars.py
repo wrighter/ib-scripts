@@ -64,11 +64,11 @@ class DownloadApp(EClient, ibapi.wrapper.EWrapper):
         self.useRTH = args.useRTH
         self.queue = Queue()
 
-    def send_done(self, code):
+    def send_done(self, code: int) -> None:
         logging.info("Sending code %s", code)
         self.queue.put(code)
 
-    def wait_done(self):
+    def wait_done(self) -> None:
         logging.info("Waiting for thread to finish ...")
         code = self.queue.get()
         logging.info("Received code %s", code)
@@ -455,7 +455,10 @@ def main():
         "--timezone", type=str, help="Timezone for requests", default="UTC"
     )
     argp.add_argument(
-        "--date-format", type=str, help="Date format for output csvs", default="%Y-%m-%d %H:%M:%S"
+        "--date-format",
+        type=str,
+        help="Date format for output csvs. Should include %z for utc offset",
+        default="%Y-%m-%d %H:%M:%S%z",
     )
     argp.add_argument(
         "--start-date",
@@ -502,8 +505,12 @@ def main():
         sys.exit(1)
 
     tz = pytz.timezone(args.timezone)
-    args.start_date = tz.localize(args.start_date)
-    args.end_date = tz.localize(args.end_date)
+    args.start_date = tz.localize(args.start_date).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    args.end_date = tz.localize(args.end_date).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
     logging.debug(f"args={args}")
     contracts = []
     for s in args.symbol:
